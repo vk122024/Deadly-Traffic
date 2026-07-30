@@ -2,518 +2,553 @@ import pygame
 import random
 import math
 import sys
+import glob  # Zabudovaná knihovna pro automatické vyhledávání souborů ve složce
 
 # ==========================================
 # 1. KONFIGURACE A KONSTANTY
 # ==========================================
-SCREEN_WIDTH = 1100
-SCREEN_HEIGHT = 750
+SCREEN_WIDTH = 1920   
+SCREEN_HEIGHT = 1080  
 FPS = 60
 
-# Pestrá cyberpunková paleta (Neon Praha Theme)
-COLOR_BG = (12, 16, 22)
-COLOR_RIVER = (20, 45, 75)
-COLOR_ROAD = (28, 36, 48)
-COLOR_BRIDGE = (65, 75, 90)
-COLOR_RAIL = (140, 110, 40)
-COLOR_TEXT = (230, 240, 255)
-COLOR_DANGER = (255, 30, 90)
-COLOR_ACCENT = (0, 200, 255)
-COLOR_GOLD = (255, 215, 0)
+UI_WIDTH = 280   
+CHUNK_SIZE_W = SCREEN_WIDTH - UI_WIDTH  
+CHUNK_SIZE_H = SCREEN_HEIGHT
 
-# Seznam futuristických značek aut a jejich specifických barev
+GAME_CENTER_X = CHUNK_SIZE_W // 2
+GAME_CENTER_Y = CHUNK_SIZE_H // 2
+
+COLOR_BG = (225, 220, 210)       
+COLOR_TEXT = (20, 30, 40)
+COLOR_DANGER = (255, 30, 90)
+COLOR_ACCENT = (0, 150, 255)
+COLOR_GOLD = (218, 165, 32)
+COLOR_RIVER = (140, 175, 210)    
+COLOR_PARK = (120, 165, 110) 
+
+GRID_X = [150, 500, 850, 1200, 1550]
+GRID_Y = [150, 450, 750, 1050]
+ROAD_THICKNESS = 65
+
+pygame.init() 
+
+pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+# --- DYNAMICKÝ SYSTÉM PRO NAČÍTÁNÍ NAKONEC AŽ 29 TEXTUR ---
+AI_CAR_TEXTURES = []
+
+# Vyhledá ve složce projektu všechny soubory odpovídající masce auto_ai*.png
+ai_texture_paths = glob.glob("auto_ai*.png")
+
+for path in ai_texture_paths:
+    try:
+        img_src = pygame.image.load(path).convert_alpha()
+        # Tvůj původní pixel-art je svislý (20px šířka, 36px délka)
+        img_src = pygame.transform.scale(img_src, (20, 36))
+        # Otočení o 270 stupňů doprava, aby předek s červenými světly správně jel dopředu
+        img_ready = pygame.transform.rotate(img_src, 270)
+        AI_CAR_TEXTURES.append(img_ready)
+    except Exception as e:
+        print(f"Chyba při načítání textury {path}: {e}")
+
+# Pokud ve složce nemáš zatím žádné auto_ai textury, načte se alespoň ta základní bez čísla
+if not AI_CAR_TEXTURES:
+    try:
+        img_src = pygame.image.load("auto_ai.png").convert_alpha()
+        img_src = pygame.transform.scale(img_src, (20, 36))
+        img_ready = pygame.transform.rotate(img_src, 270)
+        AI_CAR_TEXTURES.append(img_ready)
+    except Exception:
+        pass
+
+# Načtení textury silnice
+try:
+    TEXTURE_ROAD_SRC = pygame.image.load("silnice.png").convert_alpha()
+    TEXTURE_ROAD = pygame.transform.scale(TEXTURE_ROAD_SRC, (ROAD_THICKNESS, ROAD_THICKNESS))
+    HAS_ROAD_TEX = True
+except Exception:
+    HAS_ROAD_TEX = False
+
 AI_CAR_BRANDS = [
-    {"name": "Škoda Enyaq-X", "color": (0, 220, 255)}, # Neon Cyan
-    {"name": "Praga Neo", "color": (255, 100, 0)}, # Jasně oranžová
-    {"name": "Tatra Volt", "color": (50, 255, 120)}, # Svítivě zelená
-    {"name": "Bohemia Cyber", "color": (255, 0, 128)}, # Hot Pink / Magenta
-    {"name": "Vltava Motors", "color": (160, 80, 255)}, # Neonová fialová
-    {"name": "Praha Apex", "color": (255, 220, 0)} # Solární žlutá
+    {"name": "Škoda Enyaq-X", "color": (0, 180, 220)},
+    {"name": "Praga Neo", "color": (220, 80, 0)},
+    {"name": "Tatra Volt", "color": (30, 180, 90)},
+    {"name": "Bohemia Cyber", "color": (210, 0, 100)}
 ]
 
-# ==========================================
-# 2. HERNÍ TŘÍDY
-# ==========================================
+class PragueChunk:
+    def __init__(self, chunk_x, chunk_y):
+        self.chunk_x = chunk_x
+        self.chunk_y = chunk_y
+        
+        random.seed(f"{chunk_x}_{chunk_y}")
+        self.surface = pygame.Surface((CHUNK_SIZE_W, CHUNK_SIZE_H))
+        self.surface.fill(COLOR_BG) 
+        
+        if chunk_x == -1:
+            river_points = []
+            for y in range(-20, CHUNK_SIZE_H + 40, 20):
+                x = (CHUNK_SIZE_W // 2) + math.sin((chunk_y * CHUNK_SIZE_H + y) * 0.004) * 100
+                river_points.append((x, y))
+            pygame.draw.lines(self.surface, COLOR_RIVER, False, river_points, 200)
 
-class Player:
-    def __init__(self, x, y, car_type=0):
+        for rx in GRID_X:
+            pygame.draw.line(self.surface, (110, 115, 120), (rx, -20), (rx, CHUNK_SIZE_H + 20), ROAD_THICKNESS + 8)
+            pygame.draw.line(self.surface, (250, 250, 250), (rx, -20), (rx, CHUNK_SIZE_H + 20), ROAD_THICKNESS)
+            if HAS_ROAD_TEX:
+                for ty in range(0, CHUNK_SIZE_H, ROAD_THICKNESS):
+                    self.surface.blit(TEXTURE_ROAD, (rx - ROAD_THICKNESS // 2, ty))
+            
+        for ry in GRID_Y:
+            pygame.draw.line(self.surface, (110, 115, 120), (-20, ry), (CHUNK_SIZE_W + 20, ry), ROAD_THICKNESS + 8)
+            pygame.draw.line(self.surface, (250, 250, 250), (-20, ry), (CHUNK_SIZE_W + 20, ry), ROAD_THICKNESS)
+            if HAS_ROAD_TEX:
+                for tx in range(0, CHUNK_SIZE_W, ROAD_THICKNESS):
+                    self.surface.blit(TEXTURE_ROAD, (tx, ry - ROAD_THICKNESS // 2))
+
+        if (chunk_x + chunk_y) % 2 == 0:
+            pygame.draw.circle(self.surface, (250, 250, 250), (425, 450), 86)
+            pygame.draw.circle(self.surface, COLOR_PARK, (425, 450), 40)
+
+        for i in range(len(GRID_X) - 1):
+            for j in range(len(GRID_Y) - 1):
+                start_x = GRID_X[i] + (ROAD_THICKNESS // 2) + 15
+                end_x = GRID_X[i+1] - (ROAD_THICKNESS // 2) - 15
+                start_y = GRID_Y[j] + (ROAD_THICKNESS // 2) + 15
+                end_y = GRID_Y[j+1] - (ROAD_THICKNESS // 2) - 15
+                
+                if chunk_x == 0 and chunk_y == 0 and i == 1 and j == 1:
+                    continue
+                if chunk_x == 0 and chunk_y == -1: 
+                    continue
+                
+                if (i * j + chunk_x + chunk_y) % 3 == 0:
+                    park_rect = pygame.Rect(start_x, start_y, end_x - start_x, end_y - start_y)
+                    pygame.draw.rect(self.surface, COLOR_PARK, park_rect, border_radius=8)
+                    for _ in range(5):
+                        tx = random.randint(start_x + 10, end_x - 10)
+                        ty = random.randint(start_y + 10, end_y - 10)
+                        pygame.draw.circle(self.surface, (90, 140, 80), (tx, ty), random.randint(6, 12))
+                else:
+                    for bx in range(start_x, end_x - 40, 65):
+                        for by in range(start_y, end_y - 40, 65):
+                            if random.random() > 0.15:
+                                size = random.randint(45, 55)
+                                pygame.draw.rect(self.surface, (195, 190, 182), (bx + 3, by + 3, size, size))
+                                pygame.draw.rect(self.surface, (235, 220, 205), (bx, by, size, size))
+        random.seed()
+
+class MapManager:
+    def __init__(self):
+        self.loaded_chunks = {}
+
+    def get_chunk(self, cx, cy):
+        key = (cx, cy)
+        if key not in self.loaded_chunks:
+            self.loaded_chunks[key] = PragueChunk(cx, cy)
+        return self.loaded_chunks[key]
+
+    def is_road(self, world_x, world_y):
+        cx = math.floor(world_x / CHUNK_SIZE_W)
+        cy = math.floor(world_y / CHUNK_SIZE_H)
+        rx = world_x - (cx * CHUNK_SIZE_W)
+        ry = world_y - (cy * CHUNK_SIZE_H)
+        
+        if (cx + cy) % 2 == 0:
+            dist_to_center = math.hypot(rx - 425, ry - 450)
+            if 40 <= dist_to_center <= 86:
+                return True
+
+        half_road = ROAD_THICKNESS / 2
+        for grid_x in GRID_X:
+            if grid_x - half_road <= rx <= grid_x + half_road:
+                return True
+        for grid_y in GRID_Y:
+            if grid_y - half_road <= ry <= grid_y + half_road:
+                return True
+        return False
+
+    def draw(self, surface, cam_x, cam_y):
+        start_cx = math.floor((cam_x - GAME_CENTER_X) / CHUNK_SIZE_W) - 1
+        end_cx = math.floor((cam_x + GAME_CENTER_X) / CHUNK_SIZE_W) + 1
+        start_cy = math.floor((cam_y - GAME_CENTER_Y) / CHUNK_SIZE_H) - 1
+        end_cy = math.floor((cam_y + GAME_CENTER_Y) / CHUNK_SIZE_H) + 1
+
+        for cx in range(start_cx, end_cx + 1):
+            for cy in range(start_cy, end_cy + 1):
+                chunk = self.get_chunk(cx, cy)
+                screen_x = int(cx * CHUNK_SIZE_W - cam_x + GAME_CENTER_X)
+                screen_y = int(cy * CHUNK_SIZE_H - cam_y + GAME_CENTER_Y)
+                surface.blit(chunk.surface, (screen_x, screen_y))
+class Particle:
+    def __init__(self, x, y, color):
         self.x = float(x)
         self.y = float(y)
-        self.radius = 13
-        self.car_type = car_type  
-        
-        if self.car_type == 0:
-            self.speed = 4.8
-            self.color = (0, 255, 200)
-            self.name = "Sentinel Base (Škoda)"
-        elif self.car_type == 1:
-            self.speed = 6.8
-            self.color = (50, 255, 50)
-            self.name = "Aero-Drone MK-II (Praga)"
-        elif self.car_type == 2:
-            self.speed = 5.5
-            self.color = (255, 40, 180)
-            self.name = "Combat Interceptor (Tatra)"
+        self.vx = random.uniform(-5, 5)
+        self.vy = random.uniform(-5, 5)
+        self.lifetime = random.randint(15, 30)
+        self.color = color
 
-        self.last_dir_x = 0
-        self.last_dir_y = -1
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        self.lifetime -= 1
 
-    def move(self, keys):
+    def draw(self, surface, camera_x, camera_y):
+        screen_x = int(self.x - camera_x + GAME_CENTER_X)
+        screen_y = int(self.y - camera_y + GAME_CENTER_Y)
+        if 0 <= screen_x <= CHUNK_SIZE_W and 0 <= screen_y <= CHUNK_SIZE_H:
+            if self.lifetime > 0:
+                pygame.draw.circle(surface, self.color, (screen_x, screen_y), max(1, self.lifetime // 6))
+
+class Player:
+    def __init__(self, world_x, world_y):
+        self.world_x = float(world_x)
+        self.world_y = float(world_y)
+        self.radius = 12
+        self.speed = 6.0
+        self.color = (0, 120, 255)
+
+    def move(self, keys, map_manager):
         dx, dy = 0, 0
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            dx = -1
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            dx = 1
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            dy = -1
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            dy = 1
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -1
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = 1
+        if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -1
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = 1
 
-        if dx != 0 or dy != 0:
-            length = math.hypot(dx, dy)
-            self.last_dir_x = dx / length
-            self.last_dir_y = dy / length
+        if dx != 0 and dy != 0:
+            dx *= 0.707; dy *= 0.707
 
-        if dx != 0:
-            self.x += dx * (self.speed * 0.7 if (dy != 0) else self.speed)
-        if dy != 0:
-            self.y += dy * (self.speed * 0.7 if (dx != 0) else self.speed)
+        new_x = self.world_x + dx * self.speed
+        new_y = self.world_y + dy * self.speed
 
-        self.x = max(20, min(810, self.x))
-        self.y = max(20, min(SCREEN_HEIGHT - 20, self.y))
+        if map_manager.is_road(new_x, self.world_y):
+            self.world_x = new_x
+        if map_manager.is_road(self.world_x, new_y):
+            self.world_y = new_y
 
     def draw(self, surface, alpha_surface):
-        # Barevná záře kolem hráče
-        pygame.draw.circle(alpha_surface, (*self.color[:3], 60), (int(self.x), int(self.y)), self.radius + 12)
-        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
-        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 5)
+        center_x, center_y = GAME_CENTER_X, GAME_CENTER_Y
+        pygame.draw.circle(alpha_surface, (*self.color, 50), (center_x, center_y), self.radius + 8)
+        pygame.draw.circle(surface, self.color, (center_x, center_y), self.radius)
+        pygame.draw.circle(surface, (255, 255, 255), (center_x, center_y), 4)
 
-        if self.car_type == 2:
-            tip_x = int(self.x + self.last_dir_x * 18)
-            tip_y = int(self.y + self.last_dir_y * 18)
-            pygame.draw.line(surface, (255, 255, 255), (int(self.x), int(self.y)), (tip_x, tip_y), 3)
-
-
-class Bullet:
-    def __init__(self, x, y, dir_x, dir_y):
-        self.x = x
-        self.y = y
-        self.dir_x = dir_x
-        self.dir_y = dir_y
-        self.speed = 11.0
-        self.radius = 4
-
-    def update(self):
-        self.x += self.dir_x * self.speed
-        self.y += self.dir_y * self.speed
-
-    def draw(self, surface):
-        pygame.draw.circle(surface, (255, 100, 255), (int(self.x), int(self.y)), self.radius)
-        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 2)
-
-
-class AIVehicle:
-    def __init__(self, path):
-        self.path = path
-        self.current_target = 1
-        self.x = float(path[0][0])
-        self.y = float(path[0][1])
-        self.speed = random.uniform(2.2, 4.0)
-        self.radius = 11
+class SmartAICar:
+    def __init__(self, world_x, world_y):
+        self.world_x = float(world_x)
+        self.world_y = float(world_y)
+        brand = random.choice(AI_CAR_BRANDS)
+        self.name = brand["name"]
+        self.color = brand["color"]
+        self.size = 24
+        self.speed = 4.2
+        self.angle = 0.0
         
-        # Přiřazení náhodné značky a barvy z našeho seznamu
-        brand_data = random.choice(AI_CAR_BRANDS)
-        self.brand_name = brand_data["name"]
-        self.color = brand_data["color"]
-
-        self.is_in_hazard = False
-        self.has_scored = False
-
-    def update(self):
-        target_x, target_y = self.path[self.current_target]
-        dx = target_x - self.x
-        dy = target_y - self.y
-        dist = math.hypot(dx, dy)
-
-        if dist < self.speed:
-            self.x = float(target_x)
-            self.y = float(target_y)
-            self.current_target = (self.current_target + 1) % len(self.path)
+        # FUNKCE: Každé auto si při vytvoření náhodně vytáhne jeden z načtených obrázků ze seznamu
+        if AI_CAR_TEXTURES:
+            self.assigned_texture = random.choice(AI_CAR_TEXTURES)
         else:
-            self.x += (dx / dist) * self.speed
-            self.y += (dy / dist) * self.speed
+            self.assigned_texture = None
 
-    def draw(self, surface, alpha_surface):
-        # Stínová/světelná aura podle značky
-        pygame.draw.circle(alpha_surface, (*self.color, 40), (int(self.x), int(self.y)), self.radius + 6)
-        # Hlavní tělo vozu
-        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
-        # Středový bod vozu (interiér/sklo)
-        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 3)
+    def update(self, player_x, player_y, map_manager):
+        dx = player_x - self.world_x
+        dy = player_y - self.world_y
+        distance = math.hypot(dx, dy)
 
+        if distance > 0:
+            dx /= distance; dy /= distance
+            target_angle = math.atan2(-dy, dx)
+            self.angle += (target_angle - self.angle) * 0.1
+            
+            step_x = dx * self.speed
+            step_y = dy * self.speed
+            
+            if map_manager.is_road(self.world_x + step_x, self.world_y):
+                self.world_x += step_x
+            if map_manager.is_road(self.world_x, self.world_y + step_y):
+                self.world_y += step_y
 
-class AITrain:
-    def __init__(self, start_x, y_pos, speed):
-        self.x = float(start_x)
-        self.y = float(y_pos)
-        self.speed = speed
-        self.length = 80
-        self.height = 18
+    def draw(self, surface, camera_x, camera_y):
+        screen_x = int(self.world_x - camera_x + GAME_CENTER_X)
+        screen_y = int(self.world_y - camera_y + GAME_CENTER_Y)
+        
+        # Pokud má auto přiřazenou texturu, vykreslí se s rotací za hráčem
+        if self.assigned_texture:
+            rotated_car = pygame.transform.rotate(self.assigned_texture, math.degrees(self.angle))
+            new_rect = rotated_car.get_rect(center=(screen_x, screen_y))
+            surface.blit(rotated_car, new_rect.topleft)
+        else:
+            # Záložní vektorové auto, kdyby složka zela prázdnotou
+            car_rect = pygame.Surface((self.size * 1.5, self.size), pygame.SRCALPHA)
+            pygame.draw.rect(car_rect, self.color, (0, 0, self.size * 1.5, self.size), border_radius=4)
+            rotated_car = pygame.transform.rotate(car_rect, math.degrees(self.angle))
+            new_rect = rotated_car.get_rect(center=(screen_x, screen_y))
+            surface.blit(rotated_car, new_rect.topleft)
 
-    def update(self):
-        self.x += self.speed
-        if self.x > 830:
-            self.x = -self.length
-
-    def draw(self, surface):
-        rect = pygame.Rect(int(self.x), int(self.y), self.length, self.height)
-        pygame.draw.rect(surface, (255, 215, 0), rect, border_radius=4)
-        # Okénka vlaku
-        for wx in range(int(self.x) + 8, int(self.x) + self.length - 10, 14):
-            pygame.draw.rect(surface, (20, 20, 40), (wx, int(self.y) + 4, 8, 10), border_radius=2)
-
-    def get_rect(self):
-        return pygame.Rect(int(self.x), int(self.y), self.length, self.height)
-
-
-# ==========================================
-# 3. HLAVNÍ HERNÍ ENGINE A GUI
-# ==========================================
-
-class PragueGridlockGame:
+class AnimatedCrashScene:
     def __init__(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Prague Gridlock: Neon AI Sentinel")
-        self.clock = pygame.time.Clock()
+        self.center_x = 425.0
+        self.center_y = -375.0
+        self.font = pygame.font.SysFont("Consolas", 14, bold=True)
         
-        self.font_title = pygame.font.SysFont("Consolas", 22, bold=True)
-        self.font_hud = pygame.font.SysFont("Consolas", 14)
-        self.font_big = pygame.font.SysFont("Consolas", 36, bold=True)
-
-        self.state = "MENU"
-        self.total_credits = 0
-        self.score = 0
-        self.evaded_count = 0
-        self.selected_car_type = 0  
-        self.unlocked_cars = {0: True, 1: False, 2: False}
-
-        self.paths = [
-            [(30, 150), (400, 150), (600, 300), (790, 300)],
-            [(790, 500), (500, 500), (300, 350), (30, 350)],
-            [(300, 30), (300, 720)],
-            [(600, 720), (600, 30)]
-        ]
-
-    def reset_game(self):
-        self.player = Player(400, 350, self.selected_car_type)
-        self.vehicles = []
-        for i in range(13):
-            path = random.choice(self.paths)
-            v = AIVehicle(path)
-            v.x = float(path[0][0] + (path[1][0] - path[0][0]) * (i / 13.0))
-            v.y = float(path[0][1] + (path[1][1] - path[0][1]) * (i / 13.0))
-            self.vehicles.append(v)
-
-        self.trains = [
-            AITrain(-100, 258, 3.4),
-            AITrain(-300, 608, 2.9)
-        ]
-        self.projectiles = []
-        self.active_hazards = []
-        self.score = 0
-        self.evaded_count = 0
-        self.game_over = False
-
-    def draw_map(self):
-        self.screen.fill(COLOR_BG)
+        self.triggered = False
+        self.finished = False
+        self.timer = 0
         
-        # Řeka Vltava s barevným gradientem
-        river_points = [
-            (450, 0), (530, 180), (470, 350), (540, 520), (480, 750),
-            (570, 750), (610, 520), (540, 350), (600, 180), (530, 0)
-        ]
-        pygame.draw.polygon(self.screen, COLOR_RIVER, river_points)
-
-        # Silnice
-        pygame.draw.rect(self.screen, COLOR_ROAD, (0, 140, 830, 20))
-        pygame.draw.rect(self.screen, COLOR_ROAD, (0, 340, 830, 20))
-        pygame.draw.rect(self.screen, COLOR_ROAD, (0, 490, 830, 20))
-        pygame.draw.rect(self.screen, COLOR_ROAD, (290, 0, 20, 750))
-        pygame.draw.rect(self.screen, COLOR_ROAD, (590, 0, 20, 750))
-
-        # Železniční tratě
-        pygame.draw.line(self.screen, COLOR_RAIL, (0, 266), (830, 266), 6)
-        pygame.draw.line(self.screen, COLOR_RAIL, (0, 616), (830, 616), 6)
-
-        # Mosty přes řeku
-        bridges = [(470, 140, 100, 20), (450, 258, 120, 16), (460, 340, 100, 20), (470, 490, 100, 20), (440, 608, 130, 16)]
-        for bx, by, bw, bh in bridges:
-            pygame.draw.rect(self.screen, COLOR_BRIDGE, (bx, by, bw, bh))
-
-    def process_gameplay(self):
-        self.active_hazards.clear()
-
-        for p in self.projectiles[:]:
-            p.update()
-            if p.x < 0 or p.x > 830 or p.y < 0 or p.y > SCREEN_HEIGHT:
-                self.projectiles.remove(p)
-                continue
-            
-            hit_car = None
-            for v in self.vehicles:
-                if math.hypot(p.x - v.x, p.y - v.y) < (v.radius + p.radius):
-                    hit_car = v
-                    break
-            if hit_car:
-                self.vehicles.remove(hit_car)
-                self.projectiles.remove(p)
-                self.total_credits += 60
-                self.score += 350
-                new_v = AIVehicle(random.choice(self.paths))
-                self.vehicles.append(new_v)
-
-        for i in range(len(self.vehicles)):
-            for j in range(i + 1, len(self.vehicles)):
-                v1, v2 = self.vehicles[i], self.vehicles[j]
-                dist = math.hypot(v1.x - v2.x, v1.y - v2.y)
-
-                if dist < 42:
-                    hazard_x = (v1.x + v2.x) / 2
-                    hazard_y = (v1.y + v2.y) / 2
-                    self.active_hazards.append((hazard_x, hazard_y))
-
-                    v1.is_in_hazard = True
-                    v2.is_in_hazard = True
-
-                    p_dist = math.hypot(self.player.x - hazard_x, self.player.y - hazard_y)
-                    if p_dist < 48 and not v1.has_scored:
-                        earned = 150
-                        self.score += earned
-                        self.total_credits += earned
-                        self.evaded_count += 1
-                        v1.has_scored = True
-                        v2.has_scored = True
-
-        for v in self.vehicles:
-            if not v.is_in_hazard:
-                v.has_scored = False
-            v.is_in_hazard = False
-
-        for v in self.vehicles:
-            if math.hypot(self.player.x - v.x, self.player.y - v.y) < (self.player.radius + v.radius):
-                self.game_over = True
-
-        for t in self.trains:
-            t_rect = t.get_rect().inflate(self.player.radius, self.player.radius)
-            if t_rect.collidepoint(int(self.player.x), int(self.player.y)):
-                self.game_over = True
-
-    def draw_hud(self):
-        panel_x = 830
-        panel_width = 270
-
-        pygame.draw.rect(self.screen, (16, 22, 32), (panel_x, 0, panel_width, SCREEN_HEIGHT))
-        pygame.draw.line(self.screen, (50, 70, 95), (panel_x, 0), (panel_x, SCREEN_HEIGHT), 2)
-
-        y = 20
-        title = self.font_title.render("SENTINEL HUD", True, COLOR_ACCENT)
-        self.screen.blit(title, (panel_x + 15, y))
-
-        y += 35
-        car_lbl = self.font_hud.render(f"UNIT: {self.player.name}", True, COLOR_GOLD)
-        self.screen.blit(car_lbl, (panel_x + 15, y))
-
-        pygame.draw.line(self.screen, (50, 70, 95), (panel_x + 15, y + 20), (panel_x + 255, y + 20))
-
-        stats = [
-            f"SCORE: {self.score}",
-            f"CREDITS: {self.total_credits} k.kr",
-            f"EVADED: {self.evaded_count}",
-            f"AI UNITS: {len(self.vehicles)}",
-            f"HAZARDS: {len(self.active_hazards)}",
-            "",
-            "GRID RISK INDEX:"
-        ]
-
-        y += 30
-        for line in stats:
-            txt = self.font_hud.render(line, True, COLOR_TEXT)
-            self.screen.blit(txt, (panel_x + 15, y))
-            y += 24
-
-        risk_level = min(100, len(self.active_hazards) * 30 + 10)
-        bar_color = COLOR_DANGER if risk_level > 60 else (255, 200, 0)
-        pygame.draw.rect(self.screen, (30, 45, 60), (panel_x + 15, y, 230, 14))
-        pygame.draw.rect(self.screen, bar_color, (panel_x + 15, y, int(2.3 * risk_level), 14))
-
-        y_bottom = SCREEN_HEIGHT - 110
-        pygame.draw.line(self.screen, (50, 70, 95), (panel_x + 15, y_bottom - 10), (panel_x + 255, y_bottom - 10))
-        controls = [
-            "CONTROLS:",
-            "[WASD] Move Sentinel",
-            "[SPACE] Plasma Shot (Combat)",
-            "[ESC] Back to Menu"
-        ]
-        for c in controls:
-            txt = self.font_hud.render(c, True, (140, 170, 200))
-            self.screen.blit(txt, (panel_x + 15, y_bottom))
-            y_bottom += 20
-
-    # ==========================================
-    # INTERAKTIVNÍ GUI: HLAVNÍ MENU A OBCHOD
-    # ==========================================
-    def run_menu(self, mouse_pos, mouse_click):
-        self.screen.fill(COLOR_BG)
+        self.merc_x = self.center_x - 300
+        self.merc_y = self.center_y
+        self.amb_x = self.center_x
+        self.amb_y = self.center_y + 300
         
-        title = self.font_big.render("PRAGUE GRIDLOCK: NEON AI", True, COLOR_ACCENT)
-        subtitle = self.font_hud.render("Autonomous Multi-Brand Traffic Defense & Combat", True, (140, 170, 200))
+        self.amb_angle = 90.0
+        self.bubble_text = "Pan Kaficko: To je krasny klidny den v Praze..."
+
+    def update(self, player_x, player_y, particles):
+        if not self.triggered and math.hypot(player_x - self.center_x, player_y - self.center_y) < 300:
+            self.triggered = True
+
+        if self.triggered and not self.finished:
+            self.timer += 1
+            if self.timer < 50:
+                self.merc_x += 5.0
+                self.amb_y -= 5.0
+                self.bubble_text = "Pan Kaficko: Hele, kam ten Mercedes tak leti?!"
+            elif self.timer == 50:
+                self.merc_x = self.center_x - 10
+                self.amb_y = self.center_y
+                self.bubble_text = "* BUM !!! *"
+                for _ in range(30):
+                    particles.append(Particle(self.center_x, self.center_y, (255, 200, 0)))
+            elif 50 < self.timer < 100:
+                self.amb_x += 2.0
+                self.amb_y -= 1.0
+                self.amb_angle += 3.6
+                self.bubble_text = "Pan Kaficko: Pane boze! Sanitka je na boku!"
+                if self.timer % 3 == 0:
+                    particles.append(Particle(self.amb_x, self.amb_y, (230, 230, 230)))
+            elif self.timer >= 100:
+                self.bubble_text = "Pan Kaficko: Tady jsi v bezpeci, odpocin si!"
+                self.finished = True
+
+    def draw(self, surface, camera_x, camera_y):
+        ex = int(self.center_x - camera_x + GAME_CENTER_X)
+        ey = int(self.center_y - camera_y + GAME_CENTER_Y)
         
-        self.screen.blit(title, (SCREEN_WIDTH//2 - title.get_width()//2, 140))
-        self.screen.blit(subtitle, (SCREEN_WIDTH//2 - subtitle.get_width()//2, 185))
+        pygame.draw.circle(surface, (120, 70, 40), (ex - 50, ey + 50), 8)
+        
+        txt = self.font.render(self.bubble_text, True, (20, 20, 20))
+        pygame.draw.rect(surface, (255, 255, 255), (ex - 120, ey - 70, len(self.bubble_text)*8 + 10, 25), border_radius=5)
+        surface.blit(txt, (ex - 110, ey - 65))
 
-        cred_txt = self.font_title.render(f"Wallet: {self.total_credits} k.kr", True, COLOR_GOLD)
-        self.screen.blit(cred_txt, (SCREEN_WIDTH//2 - cred_txt.get_width()//2, 240))
+        mx = int(self.merc_x - camera_x + GAME_CENTER_X)
+        my = int(self.merc_y - camera_y + GAME_CENTER_Y)
+        ax = int(self.amb_x - camera_x + GAME_CENTER_X)
+        ay = int(self.amb_y - camera_y + GAME_CENTER_Y)
 
-        buttons = [
-            ("START SIMULATION", "PLAYING"),
-            ("TECH GARAGE & SHOP", "SHOP"),
-            ("QUIT", "QUIT")
-        ]
+        pygame.draw.rect(surface, (15, 15, 15), (mx - 20, my - 10, 35, 18), border_radius=3)
+        
+        amb_surf = pygame.Surface((40, 22), pygame.SRCALPHA)
+        pygame.draw.rect(amb_surf, (240, 220, 30), (0, 0, 40, 22), border_radius=4)
+        pygame.draw.rect(amb_surf, (255, 30, 30), (10, 0, 5, 22)) 
+        pygame.draw.circle(amb_surf, (0, 150, 255), (25, 11), 4)
+        
+        rot_amb = pygame.transform.rotate(amb_surf, self.amb_angle)
+        amb_rect = rot_amb.get_rect(center=(ax, ay))
+        surface.blit(rot_amb, amb_rect.topleft)
+# ==========================================
+# 3. HLAVNÍ HERNÍ SMYČKA, DETAILNÍ MINIMAPA A UI
+# ==========================================
+def main():
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    pygame.display.set_caption("Pražská Honička s dynamickými AI texturami")
+    clock = pygame.time.Clock()
+    
+    font_main = pygame.font.SysFont("Arial", 16, bold=True)
+    font_title = pygame.font.SysFont("Arial", 22, bold=True)
 
-        y = 330
-        for text, action in buttons:
-            rect = pygame.Rect(SCREEN_WIDTH//2 - 180, y, 360, 55)
-            is_hovered = rect.collidepoint(mouse_pos)
+    player = Player(425.0, 375.0)
+    map_manager = MapManager()
+    crash_scene = AnimatedCrashScene()
+    
+    enemies = [SmartAICar(150.0, 150.0)]
+    particles = []
+    
+    score = 0
+    game_over = False
+    spawn_timer = 0
 
-            bg_col = (35, 60, 90) if is_hovered else (20, 32, 48)
-            border_col = COLOR_ACCENT if is_hovered else (60, 85, 115)
+    btn_x = CHUNK_SIZE_W + 20
+    btn_y = SCREEN_HEIGHT - 70
+    btn_w = UI_WIDTH - 40
+    btn_h = 45
+    exit_button_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
 
-            pygame.draw.rect(self.screen, bg_col, rect, border_radius=8)
-            pygame.draw.rect(self.screen, border_col, rect, 2, border_radius=8)
-            
-            txt = self.font_title.render(text, True, COLOR_TEXT if not is_hovered else COLOR_ACCENT)
-            self.screen.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
-
-            if mouse_click and is_hovered:
-                if action == "PLAYING":
-                    self.reset_game()
-                    self.state = "PLAYING"
-                elif action == "SHOP":
-                    self.state = "SHOP"
-                elif action == "QUIT":
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+                
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1 and exit_button_rect.collidepoint(mouse_pos):
                     pygame.quit()
                     sys.exit()
 
-            y += 75
+            if event.type == pygame.KEYDOWN and game_over:
+                if event.key == pygame.K_r:
+                    player = Player(425.0, 375.0)
+                    crash_scene = AnimatedCrashScene()
+                    enemies = [SmartAICar(150.0, 150.0)]
+                    particles.clear()
+                    score = 0
+                    spawn_timer = 0
+                    game_over = False
 
-    def run_shop(self, mouse_pos, mouse_click):
-        self.screen.fill(COLOR_BG)
-
-        title = self.font_big.render("TECH GARAGE & BRAND SHOP", True, COLOR_GOLD)
-        cred_txt = self.font_title.render(f"Available Credits: {self.total_credits} k.kr", True, COLOR_TEXT)
-        
-        self.screen.blit(title, (SCREEN_WIDTH//2 - title.get_width()//2, 60))
-        self.screen.blit(cred_txt, (SCREEN_WIDTH//2 - cred_txt.get_width()//2, 110))
-
-        cars_info = [
-            (0, "Sentinel Base (Škoda)", 0, "Základní spolehlivý model. Vyvážená rychlost a stabilita."),
-            (1, "Aero-Drone MK-II (Praga)", 600, "Lehká a super-rychlá platforma pro svižné manévry."),
-            (2, "Combat Interceptor (Tatra)", 2000, "Bojový tank s plazmovým dělem pro eliminaci provozu.")
-        ]
-
-        y = 175
-        for car_id, name, price, desc in cars_info:
-            rect = pygame.Rect(150, y, 800, 115)
-            is_selected = (self.selected_car_type == car_id)
-            is_unlocked = self.unlocked_cars[car_id]
-            is_hovered = rect.collidepoint(mouse_pos)
-
-            bg_col = (30, 52, 72) if is_selected else ((22, 38, 55) if is_hovered else (14, 22, 35))
-            border_col = COLOR_ACCENT if is_selected else (COLOR_ACCENT if is_hovered else (50, 75, 100))
-
-            pygame.draw.rect(self.screen, bg_col, rect, border_radius=10)
-            pygame.draw.rect(self.screen, border_col, rect, 2, border_radius=10)
-
-            t_name = self.font_title.render(name, True, COLOR_TEXT)
-            t_desc = self.font_hud.render(desc, True, (150, 180, 210))
+        if not game_over:
+            keys = pygame.key.get_pressed()
+            player.move(keys, map_manager)
             
-            if is_selected:
-                status_str = "[ EQUIPPED ]"
-                status_col = (0, 255, 150)
-            elif is_unlocked:
-                status_str = "[ CLICK TO EQUIP ]"
-                status_col = COLOR_GOLD
-            else:
-                status_str = f"[ BUY: {price} k.kr ]"
-                status_col = (255, 100, 120)
+            crash_scene.update(player.world_x, player.world_y, particles)
+            in_safe_zone = crash_scene.triggered and not crash_scene.finished
+            
+            if not in_safe_zone:
+                spawn_timer += 1
+                if spawn_timer > 250 and len(enemies) < 8:
+                    spawn_timer = 0
+                    sx = player.world_x + random.choice([-500, 500])
+                    sy = player.world_y + random.choice([-500, 500])
+                    if map_manager.is_road(sx, sy):
+                        enemies.append(SmartAICar(sx, sy))
 
-            t_status = self.font_title.render(status_str, True, status_col)
+                for enemy in enemies:
+                    enemy.update(player.world_x, player.world_y, map_manager)
+                    if random.random() < 0.1:
+                        particles.append(Particle(enemy.world_x, enemy.world_y, (160, 160, 160)))
 
-            self.screen.blit(t_name, (rect.x + 25, rect.y + 20))
-            self.screen.blit(t_desc, (rect.x + 25, rect.y + 60))
-            self.screen.blit(t_status, (rect.right - t_status.get_width() - 25, rect.centery - t_status.get_height()//2))
+                    dist = math.hypot(player.world_x - enemy.world_x, player.world_y - enemy.world_y)
+                    if dist < (player.radius + enemy.size / 2):
+                        game_over = True
+                        for _ in range(40):
+                            particles.append(Particle(player.world_x, player.world_y, COLOR_DANGER))
+                score += 1
 
-            if mouse_click and is_hovered:
-                if is_unlocked:
-                    self.selected_car_type = car_id
-                elif not is_unlocked and self.total_credits >= price:
-                    self.total_credits -= price
-                    self.unlocked_cars[car_id] = True
-                    self.selected_car_type = car_id
+            for p in particles:
+                p.update()
+            particles = [p for p in particles if p.lifetime > 0]
 
-            y += 135
+        camera_x = player.world_x
+        camera_y = player.world_y
 
-        # Tlačítko zpět
-        back_rect = pygame.Rect(SCREEN_WIDTH//2 - 150, 650, 300, 45)
-        is_back_hover = back_rect.collidepoint(mouse_pos)
-        pygame.draw.rect(self.screen, (35, 55, 75) if is_back_hover else (18, 28, 42), back_rect, border_radius=8)
-        pygame.draw.rect(self.screen, COLOR_ACCENT if is_back_hover else (60, 85, 115), back_rect, 2, border_radius=8)
+        # --- VYKRESLENÍ HERNÍ PLOCHY ---
+        screen.fill((40, 45, 50))
+        game_surface = pygame.Surface((CHUNK_SIZE_W, CHUNK_SIZE_H))
         
-        back_txt = self.font_title.render("<- MAIN MENU", True, COLOR_TEXT if not is_back_hover else COLOR_ACCENT)
-        self.screen.blit(back_txt, (back_rect.centerx - back_txt.get_width()//2, back_rect.centery - back_txt.get_height()//2))
+        map_manager.draw(game_surface, camera_x, camera_y)
+        crash_scene.draw(game_surface, camera_x, camera_y)
 
-        if mouse_click and is_back_hover:
-            self.state = "MENU"
+        for p in particles:
+            p.draw(game_surface, camera_x, camera_y)
 
-    def run(self):
-        while True:
-            mouse_pos = pygame.mouse.get_pos()
-            mouse_click = False
+        alpha_surface = pygame.Surface((CHUNK_SIZE_W, CHUNK_SIZE_H), pygame.SRCALPHA)
+        player.draw(game_surface, alpha_surface)
+        game_surface.blit(alpha_surface, (0, 0))
+        
+        if not (crash_scene.triggered and not crash_scene.finished):
+            for enemy in enemies:
+                enemy.draw(game_surface, camera_x, camera_y)
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
+        screen.blit(game_surface, (0, 0))
 
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:  
-                        mouse_click = True
+        # --- UI INFO PANEL ---
+        ui_rect = pygame.Rect(CHUNK_SIZE_W, 0, UI_WIDTH, SCREEN_HEIGHT)
+        pygame.draw.rect(screen, (30, 35, 40), ui_rect)
+        pygame.draw.line(screen, COLOR_GOLD, (CHUNK_SIZE_W, 0), (CHUNK_SIZE_W, SCREEN_HEIGHT), 3)
 
-                if event.type == pygame.KEYDOWN:
-                    if self.state == "PLAYING":
-                        if event.key == pygame.K_ESCAPE:
-                            self.state = "MENU"
-                        elif event.key == pygame.K_SPACE and self.player.car_type == 2 and not self.game_over:
-                            b = Bullet(self.player.x, self.player.y, self.player.last_dir_x, self.player.last_dir_y)
-                            self.projectiles.append(b)
-                        elif event.key == pygame.K_r and self.game_over:
-                            self.reset_game()
+        screen.blit(font_title.render("PRAŽSKÁ HONIČKA", True, COLOR_GOLD), (CHUNK_SIZE_W + 20, 30))
+        screen.blit(font_main.render(f"Skóre: {score // 10}", True, (255, 255, 255)), (CHUNK_SIZE_W + 20, 80))
+        screen.blit(font_main.render(f"Auta za tebou: {len(enemies)}", True, (180, 180, 180)), (CHUNK_SIZE_W + 20, 110))
+        
+        if crash_scene.triggered and not crash_scene.finished:
+            screen.blit(font_main.render("ZÓNA NEHODY (BEZPEČÍ)", True, COLOR_ACCENT), (CHUNK_SIZE_W + 20, 150))
+        else:
+            screen.blit(font_main.render("STAV: Na silnici", True, (100, 255, 100)), (CHUNK_SIZE_W + 20, 150))
 
-            # --- ŘÍZENÍ STAVŮ A INTERAKTIVNÍHO GUI ---
-            if self.state == "MENU":
-                self.run_menu(mouse_pos, mouse_click)
+        # --- DETAILNÍ MINIMAPA ---
+        map_ui_y = 200
+        map_size = UI_WIDTH - 40
+        minimap_rect = pygame.Rect(CHUNK_SIZE_W + 20, map_ui_y, map_size, map_size)
+        
+        minimap_surf = pygame.Surface((map_size, map_size))
+        minimap_surf.fill((20, 25, 30)) 
+        
+        mm_center_x = map_size // 2
+        mm_center_y = map_size // 2
+        zoom = 0.12 
+        
+        start_cx = math.floor((player.world_x - 1000) / CHUNK_SIZE_W)
+        end_cx = math.floor((player.world_x + 1000) / CHUNK_SIZE_W)
+        start_cy = math.floor((player.world_y - 1000) / CHUNK_SIZE_H)
+        end_cy = math.floor((player.world_y + 1000) / CHUNK_SIZE_H)
+        
+        for cx in range(start_cx, end_cx + 1):
+            for cy in range(start_cy, end_cy + 1):
+                chunk_offset_x = cx * CHUNK_SIZE_W - player.world_x
+                chunk_offset_y = cy * CHUNK_SIZE_H - player.world_y
+                
+                if cx == -1:
+                    r_pts = []
+                    for y in range(0, CHUNK_SIZE_H, 40):
+                        x = (CHUNK_SIZE_W // 2) + math.sin((cy * CHUNK_SIZE_H + y) * 0.004) * 100
+                        mm_rx = mm_center_x + (chunk_offset_x + x) * zoom
+                        mm_ry = mm_center_y + (chunk_offset_y + y) * zoom
+                        r_pts.append((mm_rx, mm_ry))
+                    if len(r_pts) > 1:
+                        pygame.draw.lines(minimap_surf, (80, 110, 140), False, r_pts, int(200 * zoom))
 
-            elif self.state == "SHOP":
-                self.run_shop(mouse_pos, mouse_click)
+                for rx in GRID_X:
+                    mm_x = mm_center_x + (chunk_offset_x + rx) * zoom
+                    pygame.draw.line(minimap_surf, (70, 75, 80), (mm_x, 0), (mm_x, map_size), int(ROAD_THICKNESS * zoom))
+                for ry in GRID_Y:
+                    mm_y = mm_center_y + (chunk_offset_y + ry) * zoom
+                    pygame.draw.line(minimap_surf, (70, 75, 80), (0, mm_y), (map_size, mm_y), int(ROAD_THICKNESS * zoom))
+                    
+                if (cx + cy) % 2 == 0:
+                    mm_cx = mm_center_x + (chunk_offset_x + 425) * zoom
+                    mm_cy = mm_center_y + (chunk_offset_y + 450) * zoom
+                    pygame.draw.circle(minimap_surf, (70, 75, 80), (int(mm_cx), int(mm_cy)), int(86 * zoom))
+                    pygame.draw.circle(minimap_surf, (40, 70, 35), (int(mm_cx), int(mm_cy)), int(40 * zoom))
 
-            elif self.state == "PLAYING":
-                if not self.game_over:
-                    keys = pygame.key.get_pressed()
-                    self.player.move(keys)
+        for enemy in enemies:
+            rel_ex = (enemy.world_x - player.world_x) * zoom
+            rel_ey = (enemy.world_y - player.world_y) * zoom
+            pygame.draw.circle(minimap_surf, COLOR_DANGER, (int(mm_center_x + rel_ex), int(mm_center_y + rel_ey)), 4)
 
-                    for v in self.vehicles:
-                        v.update()
-                    for t in self.trains:
-                        t.update()
+        # Zobrazení polohy Easter Eggu (Bouračky) na minimapě
+        rel_eex = (crash_scene.center_x - player.world_x) * zoom
+        rel_eey = (crash_scene.center_y - player.world_y) * zoom
+        pygame.draw.circle(minimap_surf, COLOR_GOLD, (int(mm_center_x + rel_eex), int(mm_center_y + rel_eey)), 5)
 
+        pygame.draw.circle(minimap_surf, COLOR_ACCENT, (mm_center_x, mm_center_y), 5)
+        
+        screen.blit(minimap_surf, minimap_rect.topleft)
+        pygame.draw.rect(screen, COLOR_GOLD, minimap_rect, 2)
+        screen.blit(font_main.render("MINIMAPA MĚSTA", True, (150, 150, 150)), (CHUNK_SIZE_W + 20, map_ui_y + map_size + 5))
+
+        if game_over:
+            screen.blit(font_title.render("BOURAČKA!", True, COLOR_DANGER), (CHUNK_SIZE_W + 20, 520))
+            screen.blit(font_main.render("Stiskni 'R' pro restart", True, (255, 255, 255)), (CHUNK_SIZE_W + 20, 560))
+
+        btn_color = (180, 40, 60) if exit_button_rect.collidepoint(mouse_pos) else (130, 25, 40)
+        pygame.draw.rect(screen, btn_color, exit_button_rect, border_radius=6)
+        pygame.draw.rect(screen, COLOR_DANGER, exit_button_rect, 2, border_radius=6)
+        
+        exit_txt = font_main.render("UKONČIT HRU", True, (255, 255, 255))
+        screen.blit(exit_txt, (exit_button_rect.x + (btn_w - exit_txt.get_width()) // 2, exit_button_rect.y + 12))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+if __name__ == "__main__":
+    main()
